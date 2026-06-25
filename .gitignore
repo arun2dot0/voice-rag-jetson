@@ -1,0 +1,22 @@
+# Local, machine-specific config (copy from .env.example). May hold overrides
+# or, for the RAG side, secrets — never commit it.
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editor / OS cruft
+*.swp
+*.swo
+.*.kate-swp
+*~
+.DS_Store
+
+# Scratch audio from the demos
+/tmp/*.wav
+question.wav
+answer.wav

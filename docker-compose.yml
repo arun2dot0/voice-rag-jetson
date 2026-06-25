@@ -1,0 +1,85 @@
+# Fully-local voice layer for Jetson Orin Nano.
+#   mic audio -> stt -> orchestrator -> RAG service (/search) -> ollama -> tts
+#
+# This stack owns ONLY the voice + LLM pieces. The RAG search backend is an
+# external dependency: bring up your rag-rss-search app yourself (it owns its
+# own DB, storage mode, embedder, and ingestion) and point RAG_URL at it.
+# Default assumes it's published on the host at :9000.
+#
+# Bring-up:
+#   1) docker compose up -d ollama && scripts/bootstrap-models.sh
+#   2) docker compose up -d --build
+services:
+  ollama:
+    image: ${OLLAMA_IMAGE:-dustynv/ollama:r36.4.0}
+    runtime: nvidia
+    environment:
+      OLLAMA_HOST: 0.0.0.0
+      OLLAMA_MODELS: /data/models/ollama/models
+      # 8GB unified memory is tight: cold-loading the model needs a chunk of
+      # genuinely-free RAM. Keep it resident once loaded so we pay that once.
+      OLLAMA_KEEP_ALIVE: "-1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+    command: ["ollama", "serve"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - models:/data/models
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  stt:
+    build:
+      context: ./services/stt
+      args:
+        BASE_IMAGE: ${STT_BASE_IMAGE:-faster-whisper:r36.4.0}
+    runtime: nvidia
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-base.en}
+      # Must run on GPU: this CTranslate2 build is CUDA-only (no CPU SGEMM
+      # backend). With the LLM dropped to qwen2.5:1.5b, whisper small.en int8
+      # (~0.9GB) and the LLM both fit in the 8GB unified memory.
+      WHISPER_DEVICE: cuda
+      WHISPER_COMPUTE_TYPE: int8_float16
+    volumes:
+      - models:/data/models
+    ports:
+      - "8001:8001"
+
+  tts:
+    # CPU-only piper (pip install, no jetson-containers base) — no nvidia runtime.
+    build:
+      context: ./services/tts
+    environment:
+      PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-high}
+      PIPER_USE_CUDA: "0"
+    volumes:
+      - models:/data/models
+    ports:
+      - "8002:8002"
+
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+    environment:
+      STT_URL: http://stt:8001
+      TTS_URL: http://tts:8002
+      # External RAG service. Default points at the host (where rag-rss-search
+      # publishes :9000). Override in .env if it runs elsewhere.
+      RAG_URL: ${RAG_URL:-http://host.docker.internal:9000}
+      LLM_BASE_URL: http://ollama:11434/v1
+      CHAT_MODEL: ${CHAT_MODEL:-qwen2.5:1.5b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - stt
+      - tts
+      - ollama
+    ports:
+      - "8080:8080"
+
+volumes:
+  models:
