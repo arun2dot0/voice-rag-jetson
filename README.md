@@ -201,6 +201,8 @@ Want better answers? You can bump `CHAT_MODEL` to `qwen2.5:3b` (or larger) **onl
 if** you free memory first — run headless (stop the desktop) or close GUI apps,
 then re-run `warmup.sh`.
 
+Running into crashing issues? run scripts/freeup.sh to freeup memory 
+
 > This project is **docker-compose only** — no Kubernetes dependency. If you
 > want to run it on k3s (and operate it by voice), the k3s manifests for this
 > stack live in the sibling [`voice-kubectl-jetson`](../voice-kubectl-jetson)
