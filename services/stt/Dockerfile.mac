@@ -1,0 +1,20 @@
+# STT for Mac / any non-Jetson host: plain Python + pip faster-whisper, CPU only.
+#
+# Unlike the Jetson dustynv image (whose CTranslate2 is CUDA-only and has no CPU
+# GEMM backend), the standard PyPI ctranslate2 wheel ships a full CPU backend, so
+# faster-whisper runs fine on the CPU here. No CUDA, no jetson-containers.
+#
+# Used by docker-compose.mac.yml.  Audio decoding uses PyAV (bundles ffmpeg in
+# its wheel); if you ever hit a decode error, add: apt-get update && apt-get
+# install -y ffmpeg.
+FROM python:3.11-slim
+
+RUN python3 -m pip install --no-cache-dir faster-whisper flask
+
+COPY server.py /opt/stt/server.py
+
+ENV PORT=8001 \
+    HF_HOME=/data/models/huggingface
+
+EXPOSE 8001
+CMD ["python3", "/opt/stt/server.py"]

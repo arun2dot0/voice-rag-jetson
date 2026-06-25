@@ -14,10 +14,21 @@
 set -uo pipefail
 
 HOST="${HOST:-http://localhost:8080}"
-MIC_DEV="${MIC_DEV:-plughw:CARD=Microphone,DEV=0}"
-SPK_DEV="${SPK_DEV:-plughw:CARD=A40,DEV=0}"
+# Audio devices. On Linux/Jetson, default to USB mic + headset by ALSA card name.
+# On macOS, sox uses the default CoreAudio device, so leave them empty.
+if [ "$(uname)" = "Darwin" ]; then
+  MIC_DEV="${MIC_DEV-}"
+  SPK_DEV="${SPK_DEV-}"
+else
+  MIC_DEV="${MIC_DEV:-plughw:CARD=Microphone,DEV=0}"
+  SPK_DEV="${SPK_DEV:-plughw:CARD=A40,DEV=0}"
+fi
 VAD_SILENCE="${VAD_SILENCE:-1.5}"     # seconds of silence that ends a turn
 VAD_THRESHOLD="${VAD_THRESHOLD:-3%}"  # below this = "silence" (raise if noisy room)
+
+# Run sox rec/play, selecting the device only when one is set (empty = default).
+_rec()  { if [ -n "$MIC_DEV" ]; then AUDIODEV="$MIC_DEV" rec "$@"; else rec "$@"; fi; }
+_play() { if [ -n "$SPK_DEV" ]; then AUDIODEV="$SPK_DEV" play "$@"; else play "$@"; fi; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; echo; echo "bye."; exit 0' EXIT INT
 
@@ -36,7 +47,7 @@ while true; do
   echo; echo "── listening… (speak now)"
   # Record from speech onset, stop after VAD_SILENCE of quiet. The leading
   # "silence 1 0.1 ..." trims the wait-for-speech; trailing ends the turn.
-  AUDIODEV="$MIC_DEV" rec -q -c 1 -r 16000 -b 16 "$TMP/q.wav" \
+  _rec -q -c 1 -r 16000 -b 16 "$TMP/q.wav" \
       silence 1 0.1 "$VAD_THRESHOLD" 1 "$VAD_SILENCE" "$VAD_THRESHOLD" 2>/dev/null
 
   # Skip empties (background noise / no speech captured)
@@ -56,5 +67,5 @@ while true; do
   answer=$(grep -i '^X-Answer:' "$TMP/h" | cut -d' ' -f2- | unquote)
   echo "🗣️  You: $transcript"
   echo "🤖 Bot: $answer"
-  AUDIODEV="$SPK_DEV" play -q "$TMP/a.wav" 2>/dev/null
+  _play -q "$TMP/a.wav" 2>/dev/null
 done

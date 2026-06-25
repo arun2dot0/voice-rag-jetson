@@ -1,0 +1,63 @@
+# Mac (Intel) variant of the voice stack — no NVIDIA/CUDA, no jetson-containers.
+#
+# This is a STANDALONE compose file (not an overlay): it defines only the three
+# CPU services. ollama runs NATIVELY on the macOS host (Docker Desktop on Mac
+# can't pass through a GPU, and CPU-in-Docker ollama is needlessly slow), and
+# these containers reach it — and the RAG service — via host.docker.internal,
+# which Docker Desktop wires to the host automatically (host-localhost services
+# included, so no 0.0.0.0 rebind needed like on Linux).
+#
+# Bring-up:
+#   brew install ollama sox                 # sox powers scripts/converse.sh
+#   ollama serve &                          # native; Metal on Apple Silicon, CPU on Intel
+#   ollama pull qwen2.5:1.5b && ollama pull nomic-embed-text
+#   # start your rag-rss-search on :9000 (native is fine on Mac)
+#   docker compose -f docker-compose.mac.yml up -d --build
+#   MIC_DEV= SPK_DEV= ./scripts/converse.sh   # (auto-detects macOS; defaults work)
+services:
+  stt:
+    build:
+      context: ./services/stt
+      dockerfile: Dockerfile.mac     # pip faster-whisper, CPU (no CUDA image)
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-base.en}
+      WHISPER_DEVICE: cpu
+      # PyPI ctranslate2 supports int8 on x86 CPU (fast + low memory).
+      WHISPER_COMPUTE_TYPE: int8
+    volumes:
+      - models:/data/models
+    ports:
+      - "8001:8001"
+
+  tts:
+    # Same image as the Jetson stack — already plain python:3.11-slim + CPU piper.
+    build:
+      context: ./services/tts
+    environment:
+      PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-high}
+      PIPER_USE_CUDA: "0"
+    volumes:
+      - models:/data/models
+    ports:
+      - "8002:8002"
+
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+    environment:
+      STT_URL: http://stt:8001
+      TTS_URL: http://tts:8002
+      RAG_URL: ${RAG_URL:-http://host.docker.internal:9000}
+      # ollama runs natively on the Mac host:
+      LLM_BASE_URL: http://host.docker.internal:11434/v1
+      CHAT_MODEL: ${CHAT_MODEL:-qwen2.5:1.5b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - stt
+      - tts
+    ports:
+      - "8080:8080"
+
+volumes:
+  models:

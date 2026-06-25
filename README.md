@@ -143,6 +143,38 @@ keep both models warm (`scripts/warmup.sh`) so no turn pays a cold-load.
 - `POST /ask`  multipart `file=@question.wav` → `audio/wav` (spoken answer; transcript+answer in `X-Transcript`/`X-Answer` headers). Add `?format=json` to get JSON instead of audio.
 - `GET  /healthz`
 
+## Running on a Mac (Intel) instead of Jetson
+
+The Jetson images are Tegra-CUDA builds and won't run on macOS, but the
+architecture is portable. `docker-compose.mac.yml` is a **standalone** CPU-only
+variant: it runs `stt` (pip `faster-whisper`, see `services/stt/Dockerfile.mac`),
+`tts`, and `orchestrator` in Docker, while **ollama runs natively on the host**
+(Docker Desktop on Mac has no GPU passthrough). Containers reach the host's
+ollama and your RAG service via `host.docker.internal`, which Docker Desktop
+wires up automatically.
+
+```bash
+brew install ollama sox                 # sox drives scripts/converse.sh
+ollama serve &                          # native on the host
+ollama pull qwen2.5:1.5b && ollama pull nomic-embed-text
+# start rag-rss-search on :9000 (native is fine on Mac)
+docker compose -f docker-compose.mac.yml up -d --build
+
+curl -s -X POST localhost:8080/ask-text -H 'content-type: application/json' \
+  -d '{"query":"what is this blog about"}' | python3 -m json.tool
+MIC_DEV= SPK_DEV= ./scripts/converse.sh   # converse.sh auto-detects macOS
+```
+
+Notes for **Intel** Macs specifically:
+- ollama's Metal GPU acceleration only helps Apple Silicon, so on Intel it's
+  effectively **CPU** — keep `CHAT_MODEL` small (`qwen2.5:1.5b`, or `0.5b` if
+  it's sluggish). Override via `CHAT_MODEL=… docker compose -f docker-compose.mac.yml up`.
+- The whole Jetson memory dance (`scripts/warmup.sh`, cache-dropping) is **not
+  needed** — that was a Jetson unified-memory / CUDA quirk.
+- `scripts/demo.sh` is Linux/ALSA-only (`arecord`/`aplay`). On Mac use
+  `scripts/converse.sh` (sox), which detects macOS and uses the default audio
+  device. Grant your terminal Microphone permission in System Settings.
+
 ## Model sizing (Orin Nano 8GB)
 
 The 8GB is **unified** (CPU + GPU share one pool), so the whole stack plus the
