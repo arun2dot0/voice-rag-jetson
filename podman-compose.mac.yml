@@ -1,0 +1,77 @@
+# Podman variant of the Mac voice stack — the same three CPU services as
+# docker-compose.mac.yml, adapted for podman-compose / `podman compose` on macOS.
+#
+# Why a separate file? Two podman-on-Mac differences from Docker Desktop:
+#
+#   1. NO `extra_hosts: "host.docker.internal:host-gateway"`. Under Docker Desktop
+#      that magic value points containers at the macOS host. Under podman the
+#      `host-gateway` value errors out entirely ("host containers internal IP
+#      address is empty"), so keeping the line would stop the stack from starting.
+#
+#   2. We don't need it anyway: podman auto-populates BOTH host.containers.internal
+#      and host.docker.internal in every container's /etc/hosts, pointing at the
+#      gvproxy gateway (192.168.127.254), which forwards to the macOS host. So we
+#      reach native host services directly and declare no extra_hosts.
+#
+# Like the Docker Mac variant, ollama runs NATIVELY on the macOS host (podman
+# can't pass through Metal/GPU either, and CPU-in-VM ollama is needlessly slow),
+# and the RAG search backend (rag-rss-search) is an external dependency on :9000.
+#
+# Bring-up:
+#   brew install podman podman-compose ollama sox   # sox powers scripts/converse.sh
+#   podman machine init                             # first time only
+#   podman machine set --memory 4096                # 2GiB default is tight for whisper+piper; stop the machine first
+#   podman machine start
+#   ollama serve &                                  # native; Metal on Apple Silicon, CPU on Intel
+#   ollama pull qwen2.5:1.5b && ollama pull nomic-embed-text
+#   # start your rag-rss-search on :9000 (native is fine on Mac)
+#   podman-compose -f podman-compose.mac.yml up -d --build   # or: podman compose -f ...
+#   MIC_DEV= SPK_DEV= ./scripts/converse.sh         # (auto-detects macOS; defaults work)
+services:
+  stt:
+    build:
+      context: ./services/stt
+      dockerfile: Dockerfile.mac     # pip faster-whisper, CPU (no CUDA image)
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-base.en}
+      WHISPER_DEVICE: cpu
+      # PyPI ctranslate2 supports int8 on x86 CPU (fast + low memory).
+      WHISPER_COMPUTE_TYPE: int8
+    volumes:
+      - models:/data/models
+    ports:
+      - "8001:8001"
+
+  tts:
+    # Same image as the Jetson stack — already plain python:3.11-slim + CPU piper.
+    build:
+      context: ./services/tts
+    environment:
+      PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-high}
+      PIPER_USE_CUDA: "0"
+    volumes:
+      - models:/data/models
+    ports:
+      - "8002:8002"
+
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+    environment:
+      STT_URL: http://stt:8001
+      TTS_URL: http://tts:8002
+      # ollama and rag-rss-search both run natively on the macOS host; podman
+      # resolves host.containers.internal -> the host via gvproxy (no extra_hosts
+      # needed). host.docker.internal resolves to the same address if you prefer
+      # it / set it in .env.
+      RAG_URL: ${RAG_URL:-http://host.containers.internal:9000}
+      LLM_BASE_URL: http://host.containers.internal:11434/v1
+      CHAT_MODEL: ${CHAT_MODEL:-qwen2.5:1.5b}
+    depends_on:
+      - stt
+      - tts
+    ports:
+      - "8080:8080"
+
+volumes:
+  models:

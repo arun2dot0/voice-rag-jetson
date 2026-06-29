@@ -175,6 +175,33 @@ Notes for **Intel** Macs specifically:
   `scripts/converse.sh` (sox), which detects macOS and uses the default audio
   device. Grant your terminal Microphone permission in System Settings.
 
+### Podman instead of Docker (Mac)
+
+Prefer Podman? `podman-compose.mac.yml` is the same standalone CPU stack, adapted
+for `podman-compose` / `podman compose`. ollama still runs **natively on the host**
+(Podman can't pass through Metal/GPU either). Two podman-on-Mac differences from
+Docker Desktop are baked in:
+
+- **No `extra_hosts: "host.docker.internal:host-gateway"`.** Under Podman that
+  magic value errors out (`host containers internal IP address is empty`) and
+  would stop the stack from starting — so the line is removed.
+- Containers reach the host's ollama/RAG via **`host.containers.internal`**.
+  Podman auto-populates it (and `host.docker.internal`) in every container,
+  routing through gvproxy to the macOS host, so **no `extra_hosts` is needed**.
+
+```bash
+brew install podman podman-compose ollama sox
+podman machine init                  # first time only
+podman machine set --memory 4096     # 2GiB default is tight for whisper+piper (stop the machine first)
+podman machine start
+ollama serve &                       # native; Metal on Apple Silicon, CPU on Intel
+ollama pull qwen2.5:1.5b && ollama pull nomic-embed-text
+# start rag-rss-search on :9000 (native is fine on Mac)
+podman-compose -f podman-compose.mac.yml up -d --build   # or: podman compose -f ...
+```
+
+The Intel-Mac notes above apply equally here.
+
 ## Model sizing (Orin Nano 8GB)
 
 The 8GB is **unified** (CPU + GPU share one pool), so the whole stack plus the
